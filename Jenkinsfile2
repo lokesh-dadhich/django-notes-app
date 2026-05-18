@@ -3,12 +3,16 @@ pipeline {
 
     environment {
         AWS_REGION = 'ap-south-1'
+        AWS_DEFAULT_REGION = 'ap-south-1'
+
         AWS_ACCOUNT_ID = '809338888549'
         ECR_REPO_NAME = 'my-app'
         EKS_CLUSTER_NAME = 'my-eks-cluster'
 
         IMAGE_TAG = "${BUILD_NUMBER}"
         IMAGE_URI = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}:${IMAGE_TAG}"
+
+        KUBECONFIG = '/var/lib/jenkins/.kube/config'
     }
 
     stages {
@@ -86,10 +90,21 @@ pipeline {
                     )
                 ]) {
                     sh '''
+                        echo "AWS identity used by Jenkins:"
+                        aws sts get-caller-identity
+
+                        rm -rf /var/lib/jenkins/.kube
+                        mkdir -p /var/lib/jenkins/.kube
+
                         aws eks update-kubeconfig \
                           --region $AWS_REGION \
-                          --name $EKS_CLUSTER_NAME
+                          --name $EKS_CLUSTER_NAME \
+                          --kubeconfig $KUBECONFIG
 
+                        echo "Current Kubernetes context:"
+                        kubectl config current-context
+
+                        echo "Testing EKS access:"
                         kubectl get nodes
                     '''
                 }
