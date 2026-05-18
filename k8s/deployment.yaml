@@ -2,14 +2,11 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: python-app
-  labels:
-    app: python-app
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: python-app
-
   template:
     metadata:
       labels:
@@ -20,4 +17,4 @@ spec:
           image: IMAGE_URI_PLACEHOLDER
           imagePullPolicy: Always
           ports:
-            - containerPort: 5000
+            - containerPort: 8000
