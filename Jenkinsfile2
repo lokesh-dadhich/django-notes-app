@@ -1,0 +1,136 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION = 'ap-south-1'
+
+        // Replace with your AWS account ID
+        AWS_ACCOUNT_ID = '809338888549'
+
+        // ECR repo created by Terraform
+        ECR_REPO_NAME = 'my-app'
+
+        // EKS cluster created by Terraform
+        EKS_CLUSTER_NAME = 'my-eks-cluster'
+
+        IMAGE_TAG = "${BUILD_NUMBER}"
+
+        IMAGE_URI = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}:${IMAGE_TAG}"
+    }
+
+    stages {
+        stage('Checkout Code') {
+            steps {
+                git branch: 'main', url: 'https://github.com/lokesh-dadhich/YOUR-PYTHON-APP-REPO.git'
+            }
+        }
+
+        stage('Check AWS Identity') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-creds',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                        aws sts get-caller-identity
+                    '''
+                }
+            }
+        }
+
+        stage('Login to ECR') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-creds',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                        aws ecr get-login-password --region $AWS_REGION | \
+                        docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+                    '''
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh '''
+                    docker build -t $ECR_REPO_NAME:$IMAGE_TAG .
+                    docker tag $ECR_REPO_NAME:$IMAGE_TAG $IMAGE_URI
+                '''
+            }
+        }
+
+        stage('Push Docker Image to ECR') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-creds',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                        docker push $IMAGE_URI
+                    '''
+                }
+            }
+        }
+
+        stage('Update Kubeconfig') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-creds',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                        aws eks update-kubeconfig \
+                          --region $AWS_REGION \
+                          --name $EKS_CLUSTER_NAME
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy to EKS') {
+            steps {
+                sh '''
+                    sed -i "s|IMAGE_URI_PLACEHOLDER|$IMAGE_URI|g" k8s/deployment.yaml
+
+                    kubectl apply -f k8s/deployment.yaml
+                    kubectl apply -f k8s/service.yaml
+                '''
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                sh '''
+                    kubectl get nodes
+                    kubectl get pods -o wide
+                    kubectl get svc
+                    kubectl get deployment
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Python app Docker image pushed to ECR and deployed on EKS successfully.'
+        }
+
+        failure {
+            echo 'Pipeline failed. Check Jenkins console logs.'
+        }
+    }
+}
