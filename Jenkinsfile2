@@ -3,18 +3,11 @@ pipeline {
 
     environment {
         AWS_REGION = 'ap-south-1'
-
-        // Replace with your AWS account ID
         AWS_ACCOUNT_ID = '809338888549'
-
-        // ECR repo created by Terraform
         ECR_REPO_NAME = 'my-app'
-
-        // EKS cluster created by Terraform
         EKS_CLUSTER_NAME = 'my-eks-cluster'
 
         IMAGE_TAG = "${BUILD_NUMBER}"
-
         IMAGE_URI = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}:${IMAGE_TAG}"
     }
 
@@ -83,7 +76,7 @@ pipeline {
             }
         }
 
-        stage('Update Kubeconfig') {
+        stage('Update Kubeconfig and Test EKS Access') {
             steps {
                 withCredentials([
                     usernamePassword(
@@ -96,6 +89,8 @@ pipeline {
                         aws eks update-kubeconfig \
                           --region $AWS_REGION \
                           --name $EKS_CLUSTER_NAME
+
+                        kubectl get nodes
                     '''
                 }
             }
@@ -103,30 +98,45 @@ pipeline {
 
         stage('Deploy to EKS') {
             steps {
-                sh '''
-                    sed -i "s|IMAGE_URI_PLACEHOLDER|$IMAGE_URI|g" k8s/deployment.yaml
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-creds',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                        sed -i "s|IMAGE_URI_PLACEHOLDER|$IMAGE_URI|g" k8s/deployment.yaml
 
-                    kubectl apply -f k8s/deployment.yaml
-                    kubectl apply -f k8s/service.yaml
-                '''
+                        kubectl apply -f k8s/deployment.yaml
+                        kubectl apply -f k8s/service.yaml
+                    '''
+                }
             }
         }
 
         stage('Verify Deployment') {
             steps {
-                sh '''
-                    kubectl get nodes
-                    kubectl get pods -o wide
-                    kubectl get svc
-                    kubectl get deployment
-                '''
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-creds',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                        kubectl get pods -o wide
+                        kubectl get svc
+                        kubectl get deployment
+                    '''
+                }
             }
         }
     }
 
     post {
         success {
-            echo 'Python app Docker image pushed to ECR and deployed on EKS successfully.'
+            echo 'Docker image pushed to ECR and Django app deployed on EKS successfully.'
         }
 
         failure {
